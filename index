@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collaborative Marking Tool</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Custom styles for a better look and feel */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+        }
+        .card {
+            background-color: white;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            transition: all 0.3s ease-in-out;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+        .btn-primary {
+            background-color: #4f46e5;
+            color: white;
+            transition: background-color 0.3s;
+        }
+        .btn-primary:hover {
+            background-color: #4338ca;
+        }
+        .input-field {
+            border: 1px solid #d1d5db;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        .input-field:focus {
+            outline: none;
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 2px #c7d2fe;
+        }
+    </style>
+</head>
+<body class="antialiased text-gray-800">
+
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold text-gray-900">Collaborative Marking Tool</h1>
+            <p class="text-lg text-gray-600 mt-2">Submit marks from 1 to 10 for each item. Averages are updated in real-time for all users.</p>
+        </header>
+
+        <!-- Overall Average Display -->
+        <div class="card p-6 mb-8 max-w-md mx-auto">
+            <h2 class="text-xl font-semibold text-center text-gray-700">Overall Average Mark</h2>
+            <p id="overall-average" class="text-5xl font-bold text-center text-indigo-600 mt-2">0.00</p>
+            <p class="text-sm text-gray-500 text-center mt-2">This is the average of all marks submitted across all items.</p>
+        </div>
+
+        <!-- User ID Display -->
+        <div class="text-center mb-8">
+            <p class="text-sm text-gray-500">Your User ID (share with others to collaborate):</p>
+            <p id="user-id" class="font-mono bg-gray-200 text-gray-700 rounded-md px-3 py-1 inline-block mt-1">Loading...</p>
+        </div>
+
+        <!-- Marking Grid -->
+        <div id="marking-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <!-- Marking items will be dynamically inserted here by JavaScript -->
+        </div>
+    </div>
+
+    <!-- Firebase -->
+    <script type="module">
+        // --- Firebase v11.6.1 ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- App Configuration ---
+        // These global variables are provided by the environment.
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-marking-app';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "DEMO_KEY", authDomain: "DEMO.firebaseapp.com", projectId: "DEMO" };
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db, auth;
+        let userId;
+        let marksData = {}; // Local cache for marks data
+        let marksDocRef;
+
+        // --- Main Application Logic ---
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeAppAndAuth();
+            generateMarkingGrid();
+        });
+
+        /**
+         * Initializes Firebase app and handles user authentication.
+         */
+        async function initializeAppAndAuth() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        document.getElementById('user-id').textContent = userId;
+                        
+                        // Path for public collaborative data
+                        const docPath = `artifacts/${appId}/public/data/marks/singleton`;
+                        marksDocRef = doc(db, docPath);
+
+                        await setupRealtimeListener();
+                    } else {
+                        // User is signed out.
+                        document.getElementById('user-id').textContent = 'Not authenticated';
+                    }
+                });
+
+                // Sign in the user
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+            } catch (error) {
+                console.error("Firebase Initialization Error:", error);
+                document.getElementById('user-id').textContent = 'Error connecting to service.';
+            }
+        }
+
+        /**
+         * Sets up a real-time listener on the Firestore document.
+         */
+        async function setupRealtimeListener() {
+            if (!marksDocRef) return;
+
+            onSnapshot(marksDocRef, (doc) => {
+                if (doc.exists()) {
+                    marksData = doc.data();
+                } else {
+                    // If the document doesn't exist, create it with initial data
+                    const initialData = {};
+                    for (let i = 1; i <= 30; i++) {
+                        initialData[i] = { marks: [], total: 0, count: 0 };
+                    }
+                    setDoc(marksDocRef, initialData);
+                    marksData = initialData;
+                }
+                updateUI();
+            }, (error) => {
+                console.error("Error listening to marks data:", error);
+            });
+        }
+
+
+        /**
+         * Generates the grid of 30 marking items in the DOM.
+         */
+        function generateMarkingGrid() {
+            const grid = document.getElementById('marking-grid');
+            if (!grid) return;
+            
+            let gridHtml = '';
+            for (let i = 1; i <= 30; i++) {
+                gridHtml += `
+                    <div id="item-card-${i}" class="card p-4 flex flex-col justify-between">
+                        <div>
+                            <div class="flex justify-between items-start mb-2">
+                                <h3 class="text-lg font-semibold text-gray-800">Item ${i}</h3>
+                                <div class="text-right">
+                                    <span class="text-xs text-gray-500 block">Average</span>
+                                    <span id="avg-${i}" class="text-xl font-bold text-indigo-500">0.00</span>
+                                </div>
+                            </div>
+                            <p id="count-${i}" class="text-xs text-gray-500 mb-3">Submissions: 0</p>
+                        </div>
+                        <div class="mt-auto">
+                            <div class="flex items-center space-x-2">
+                                <input type="number" id="mark-input-${i}" min="1" max="10" class="input-field w-full px-3 py-2 rounded-md text-center" placeholder="1-10">
+                                <button onclick="submitMark(${i})" class="btn-primary font-semibold py-2 px-4 rounded-md flex-shrink-0">Submit</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            grid.innerHTML = gridHtml;
+        }
+
+        /**
+         * Updates all UI elements based on the current marksData.
+         */
+        function updateUI() {
+            if (!marksData) return;
+
+            let totalMarksSum = 0;
+            let totalMarksCount = 0;
+
+            for (let i = 1; i <= 30; i++) {
+                const itemData = marksData[i] || { total: 0, count: 0 };
+                const average = itemData.count > 0 ? (itemData.total / itemData.count) : 0;
+
+                const avgEl = document.getElementById(`avg-${i}`);
+                const countEl = document.getElementById(`count-${i}`);
+
+                if (avgEl) avgEl.textContent = average.toFixed(2);
+                if (countEl) countEl.textContent = `Submissions: ${itemData.count}`;
+
+                totalMarksSum += itemData.total;
+                totalMarksCount += itemData.count;
+            }
+
+            const overallAverage = totalMarksCount > 0 ? (totalMarksSum / totalMarksCount) : 0;
+            const overallAvgEl = document.getElementById('overall-average');
+            if (overallAvgEl) overallAvgEl.textContent = overallAverage.toFixed(2);
+        }
+
+        /**
+         * Handles the submission of a new mark for a specific item.
+         * @param {number} itemNumber - The item number (1-30) for which the mark is submitted.
+         */
+        window.submitMark = async function(itemNumber) {
+            if (!marksDocRef) {
+                console.error("Database not ready.");
+                alert("Service is not connected. Please try again in a moment.");
+                return;
+            }
+
+            const input = document.getElementById(`mark-input-${itemNumber}`);
+            if (!input) return;
+
+            const mark = parseInt(input.value, 10);
+
+            // --- Input Validation ---
+            if (isNaN(mark) || mark < 1 || mark > 10) {
+                alert("Please enter a valid mark between 1 and 10.");
+                input.value = '';
+                input.focus();
+                return;
+            }
+
+            // --- Update Firestore Document ---
+            // We use dot notation to update a specific field within the document.
+            // This is more efficient than reading and writing the whole document.
+            const currentItemData = marksData[itemNumber] || { total: 0, count: 0 };
+            const newTotal = currentItemData.total + mark;
+            const newCount = currentItemData.count + 1;
+
+            try {
+                // The onSnapshot listener will handle the UI update automatically.
+                await updateDoc(marksDocRef, {
+                    [`${itemNumber}.total`]: newTotal,
+                    [`${itemNumber}.count`]: newCount
+                });
+                input.value = ''; // Clear input on successful submission
+            } catch (error) {
+                console.error("Error submitting mark:", error);
+                alert("Could not submit mark. Please check your connection and try again.");
+            }
+        }
+    </script>
+
+</body>
+</html>
