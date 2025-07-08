@@ -80,27 +80,48 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- App Configuration ---
-        // These global variables are provided by the environment.
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-marking-app';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "DEMO_KEY", authDomain: "DEMO.firebaseapp.com", projectId: "DEMO" };
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // --- ⬇️ 1. YOUR FIREBASE CONFIGURATION IS NOW ADDED ⬇️ ---
+        const userFirebaseConfig = {
+            apiKey: "AIzaSyDna2LoyH1jZlo5oQT-qHE7235sHxHtm9A",
+            authDomain: "tierlist-b4b98.firebaseapp.com",
+            projectId: "tierlist-b4b98",
+            storageBucket: "tierlist-b4b98.appspot.com", // Corrected storageBucket URL
+            messagingSenderId: "402992072826",
+            appId: "1:402992072826:web:8d2a3628a4a8ea2e64d3c3"
+        };
+        // --- ⬆️ 1. END OF CONFIGURATION AREA ⬆️ ---
 
+
+        // --- DO NOT EDIT BELOW THIS LINE (unless you know what you're doing) ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-marking-app';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : userFirebaseConfig;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
         let db, auth;
         let userId;
-        let marksData = {}; // Local cache for marks data
+        let marksData = {};
         let marksDocRef;
 
-        // --- Main Application Logic ---
         document.addEventListener('DOMContentLoaded', () => {
             initializeAppAndAuth();
             generateMarkingGrid();
         });
 
-        /**
-         * Initializes Firebase app and handles user authentication.
-         */
         async function initializeAppAndAuth() {
+            // Check if the user has replaced the placeholder config
+            if (firebaseConfig.apiKey.startsWith("PASTE_YOUR")) {
+                document.getElementById('user-id').textContent = 'Firebase not configured.';
+                document.getElementById('overall-average').textContent = 'N/A';
+                const grid = document.getElementById('marking-grid');
+                if(grid){
+                    grid.innerHTML = `<div class="col-span-full text-center p-8 bg-yellow-100 text-yellow-800 rounded-lg shadow-md">
+                        <h3 class="font-bold text-lg">Configuration Needed</h3>
+                        <p class="mt-2">Please open this HTML file in a text editor and follow the instructions in the &lt;script&gt; section to add your Firebase project configuration.</p>
+                        </div>`;
+                }
+                return; // Stop execution
+            }
+
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
@@ -110,19 +131,14 @@
                     if (user) {
                         userId = user.uid;
                         document.getElementById('user-id').textContent = userId;
-                        
-                        // Path for public collaborative data
                         const docPath = `artifacts/${appId}/public/data/marks/singleton`;
                         marksDocRef = doc(db, docPath);
-
                         await setupRealtimeListener();
                     } else {
-                        // User is signed out.
                         document.getElementById('user-id').textContent = 'Not authenticated';
                     }
                 });
 
-                // Sign in the user
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
@@ -132,23 +148,19 @@
             } catch (error) {
                 console.error("Firebase Initialization Error:", error);
                 document.getElementById('user-id').textContent = 'Error connecting to service.';
+                document.getElementById('marking-grid').innerHTML = `<div class="col-span-full text-center p-8 bg-red-100 text-red-800 rounded-lg shadow-md"><p>Could not connect to Firebase. Check your project configuration and ensure Firestore/Auth are enabled.</p></div>`;
             }
         }
 
-        /**
-         * Sets up a real-time listener on the Firestore document.
-         */
         async function setupRealtimeListener() {
             if (!marksDocRef) return;
-
             onSnapshot(marksDocRef, (doc) => {
                 if (doc.exists()) {
                     marksData = doc.data();
                 } else {
-                    // If the document doesn't exist, create it with initial data
                     const initialData = {};
                     for (let i = 1; i <= 30; i++) {
-                        initialData[i] = { marks: [], total: 0, count: 0 };
+                        initialData[i] = { total: 0, count: 0 };
                     }
                     setDoc(marksDocRef, initialData);
                     marksData = initialData;
@@ -159,10 +171,6 @@
             });
         }
 
-
-        /**
-         * Generates the grid of 30 marking items in the DOM.
-         */
         function generateMarkingGrid() {
             const grid = document.getElementById('marking-grid');
             if (!grid) return;
@@ -193,11 +201,8 @@
             grid.innerHTML = gridHtml;
         }
 
-        /**
-         * Updates all UI elements based on the current marksData.
-         */
         function updateUI() {
-            if (!marksData) return;
+            if (!marksData || Object.keys(marksData).length === 0) return;
 
             let totalMarksSum = 0;
             let totalMarksCount = 0;
@@ -221,14 +226,9 @@
             if (overallAvgEl) overallAvgEl.textContent = overallAverage.toFixed(2);
         }
 
-        /**
-         * Handles the submission of a new mark for a specific item.
-         * @param {number} itemNumber - The item number (1-30) for which the mark is submitted.
-         */
         window.submitMark = async function(itemNumber) {
             if (!marksDocRef) {
                 console.error("Database not ready.");
-                alert("Service is not connected. Please try again in a moment.");
                 return;
             }
 
@@ -237,7 +237,6 @@
 
             const mark = parseInt(input.value, 10);
 
-            // --- Input Validation ---
             if (isNaN(mark) || mark < 1 || mark > 10) {
                 alert("Please enter a valid mark between 1 and 10.");
                 input.value = '';
@@ -245,20 +244,16 @@
                 return;
             }
 
-            // --- Update Firestore Document ---
-            // We use dot notation to update a specific field within the document.
-            // This is more efficient than reading and writing the whole document.
             const currentItemData = marksData[itemNumber] || { total: 0, count: 0 };
             const newTotal = currentItemData.total + mark;
             const newCount = currentItemData.count + 1;
 
             try {
-                // The onSnapshot listener will handle the UI update automatically.
                 await updateDoc(marksDocRef, {
                     [`${itemNumber}.total`]: newTotal,
                     [`${itemNumber}.count`]: newCount
                 });
-                input.value = ''; // Clear input on successful submission
+                input.value = '';
             } catch (error) {
                 console.error("Error submitting mark:", error);
                 alert("Could not submit mark. Please check your connection and try again.");
